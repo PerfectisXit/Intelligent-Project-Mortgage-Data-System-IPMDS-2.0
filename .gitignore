@@ -7,6 +7,7 @@ npm-debug.log*
 dist/
 build/
 coverage/
+*.tsbuildinfo
 
 # Python
 __pycache__/

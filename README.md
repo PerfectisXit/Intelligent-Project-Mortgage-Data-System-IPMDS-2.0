@@ -91,3 +91,23 @@ npm test
 
 ## 运行手册
 - 见 `docs/RUNBOOK.md`
+
+## 生产模式（Docker Compose）
+```bash
+# 1) 先在当前 shell 导出 API Key（示例）
+export OPENAI_API_KEY=your_key
+# 可选：export DEEPSEEK_API_KEY=...
+# 可选：export CLAUDE_API_KEY=...
+
+# 2) 启动生产栈（前端:8080，后端:4000）
+docker compose -f docker-compose.prod.yml up -d --build
+
+# 3) 健康检查
+curl http://127.0.0.1:4000/health
+curl http://127.0.0.1:8080/healthz
+```
+
+说明：
+- 生产前端镜像文件：`frontend/Dockerfile.prod`
+- 生产编排文件：`docker-compose.prod.yml`
+- 前端 API 基地址通过 `VITE_API_BASE_URL` 构建参数注入（默认 `/api/v1`）

@@ -1,7 +1,7 @@
 # IPMDS 2.0 - 智能工抵台账管理系统
 
-![Version](https://img.shields.io/badge/version-v0.1.0-blue)
-![Release](https://img.shields.io/badge/release-v0.1.0-success)
+![Version](https://img.shields.io/badge/version-v0.2.0-blue)
+![Release](https://img.shields.io/badge/release-v0.2.0-success)
 
 企业级 Web 台账系统，覆盖：
 - 智能 Excel 导入比对（新增/变更/无变化）
@@ -9,7 +9,8 @@
 - AI Copilot 自然语言录入与追问
 - OCR 文件识别绑定（接口预留）
 
-当前版本：`v0.1.0`（与 `backend/package.json`、`frontend/package.json` 同步）
+当前版本：`v0.2.0`（与 `backend/package.json`、`frontend/package.json` 同步）
+版本说明：`docs/releases/v0.2.0.md`
 
 ## 目录
 - `frontend/`: React + Ant Design
@@ -25,6 +26,7 @@
 createdb ipmds
 psql -d ipmds -f database/migrations/001_init.sql
 psql -d ipmds -f database/migrations/002_import_change_audits.sql
+psql -d ipmds -f database/migrations/003_ai_provider_settings.sql
 ```
 
 ### 2) Python 数据服务
@@ -61,6 +63,14 @@ npm run dev
 - `POST /api/v1/imports/{id}/rollback`
 - `POST /api/v1/files/ocr-link`
 - `POST /api/v1/files/{id}/confirm-link`
+- `GET /api/v1/settings/ai-providers`
+- `PUT /api/v1/settings/ai-providers`
+- `POST /api/v1/settings/ai-providers/probe`
+- `GET /api/v1/settings/ai-prompts`
+- `POST /api/v1/imports/excel/analyze-headers`
+- `POST /api/v1/imports/excel/analyze-headers-stream`
+- `POST /api/v1/imports/excel/confirm-mapping`
+- `GET /api/v1/imports/{id}/committed-preview`
 
 ## RBAC（请求头）
 - 通过请求头传递身份（开发环境）：
@@ -87,6 +97,59 @@ npm test
 ## 一键校验
 ```bash
 ./scripts/verify-all.sh
+```
+
+## 数据备份与恢复
+```bash
+# 1) 执行一次本地备份（默认输出到 ~/ipmds-backups）
+./scripts/backup-db.sh
+
+# 2) 指定云端上传（需先配置 rclone remote）
+RCLONE_REMOTE='oss:ipmds-backups' ./scripts/backup-db.sh
+
+# 3) 恢复示例（将备份回灌到 ipmds2）
+gunzip -c ~/ipmds-backups/ipmds2_YYYY-MM-DD_HHMMSS.sql.gz | \
+docker exec -i -e PGPASSWORD=ipmds_pass ipmds-postgres \
+psql -h 127.0.0.1 -U ipmds_user -d ipmds2
+```
+
+定时备份（每天 02:30）：
+```bash
+crontab -e
+```
+添加：
+```bash
+30 2 * * * /bin/bash /Users/xpan/Desktop/Intelligent\ Project\ Mortgage\ Data\ System（IPMDS）2.0/scripts/backup-db.sh >> /tmp/ipmds-backup.log 2>&1
+```
+
+macOS 推荐使用 launchd（更稳定）：
+```bash
+# 安装每天 02:30 任务
+./scripts/backup-launchd.sh install
+
+# 自定义时间 + 云端上传
+BACKUP_HOUR=3 BACKUP_MINUTE=15 RCLONE_REMOTE='oss:ipmds-backups' ./scripts/backup-launchd.sh install
+
+# 查看状态
+./scripts/backup-launchd.sh status
+
+# 立即执行一次
+./scripts/backup-launchd.sh run-now
+
+# 卸载任务
+./scripts/backup-launchd.sh uninstall
+```
+
+## 模式切换脚本
+```bash
+# 开发模式（热更新）说明
+./scripts/dev-up.sh
+
+# 停止生产栈并启动生产模式
+./scripts/prod-up.sh
+
+# 停止生产栈
+./scripts/prod-down.sh
 ```
 
 ## 运行手册

@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-02-12
+### Added
+- AI provider management backend:
+  - `GET/PUT /api/v1/settings/ai-providers`
+  - `POST /api/v1/settings/ai-providers/probe` (availability + latency)
+  - `GET /api/v1/settings/ai-prompts` (read-only prompt templates)
+- API settings UI enhancements:
+  - Provider enable/disable, default/fallback routing, persistence to DB
+  - One-click provider probe with status code and latency feedback
+  - Prompt viewer for Copilot + header-review templates
+- Excel import workflow upgrades:
+  - Two-stage processing UX (Python rule stage + LLM review stage)
+  - Streaming stage logs via `analyze-headers-stream` (SSE)
+  - Header mapping confirmation before diff/commit
+  - Committed preview table with Excel-like wide view
+- Domain field coverage for real GD ledger:
+  - Added mappings for `支付工程款的单位/总包/分包（拿走房子的单位）`
+  - Added mappings for `是否更名/收款比例/未达款情况说明/联系方式/身份证/地址/现房成交单价`
+- Import quality rules:
+  - Phone validation (mobile/landline)
+  - Receipt ratio deviation check (`实际收款 / 成交总价`)
+  - Date completeness check (e.g. year-only sign date)
+  - External ledger rows require construction/general contractor units
+- Data lineage in preview:
+  - Last update source (Excel/AI), update file/session, update timestamp
+  - Status display + status basis column
+  - Added project name column
+  - Sorting/filtering for key columns
+- Runtime/ops scripts:
+  - Dev/prod up/down scripts
+  - DB backup scripts (manual + launchd helper)
+
+### Changed
+- Copilot and header-review model timeouts increased for better tolerance.
+- Added front-end timeout confirmation: when AI parsing is slow, user can continue waiting or cancel.
+- Payment method and transaction type display normalized to Chinese labels.
+- Import commit now tolerates non-UUID dev user IDs (prevents transaction rollback).
+- Source filename encoding recovery added for Chinese filenames.
+
+### Fixed
+- Resolved “import commit succeeds in UI but preview fields appear empty” caused by UUID write failure in `created_by`.
+- Resolved garbled source file names in preview for Chinese filenames.
+- Improved fallback behavior when model review fails (rules-only mode remains usable).
+
 ## [0.1.0] - 2026-02-09
 ### Added
 - Initial full-stack baseline for IPMDS 2.0:

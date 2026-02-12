@@ -1,5 +1,10 @@
 import axios from "axios";
 import { env } from "../config/env.js";
+import { getAiProviderSettings, resolveOrganizationIdByProjectId } from "./aiSettingsService.js";
+import { copilotStructuredOutputInstruction } from "./promptTemplates.js";
+import type { ProviderKey } from "../types/aiSettings.js";
+
+const COPILOT_TIMEOUT_MS = Number(process.env.COPILOT_TIMEOUT_MS ?? 60000);
 
 export interface LlmStructuredResponse {
   intent: string;
@@ -16,34 +21,26 @@ const amountKeywordRegex =
   /(?:付|付款|支付|先付|金额|收款|给|合计|总计)\s*([0-9]+(?:\.[0-9]+)?)/;
 const unitRegex = /([A-Za-z]?\d?-?\d{3,4})/;
 
-const structuredOutputInstruction = `
-你是工抵台账录入助手。你必须只返回 JSON，不要输出 markdown。
-JSON schema:
-{
-  "intent": "create_transaction|create_unit|query|link_file|unknown",
-  "confidence": number,
-  "entities": {
-    "customer_name"?: string,
-    "unit_code"?: string,
-    "amount"?: number,
-    "currency"?: "CNY",
-    "txn_type"?: "deposit"|"down_payment"|"installment"|"full_payment",
-    "occurred_at"?: "YYYY-MM-DD"
-  },
-  "missingFields": string[],
-  "clarificationQuestion": string,
-  "candidateMatches": [{"canonical": string, "score": number, "reason": string}],
-  "safeToWrite": boolean
-}
-规则:
-1) 信息不完整必须放入 missingFields，并 safeToWrite=false。
-2) 不得臆造日期/金额/房号。
-3) 仅输出 JSON。
-`.trim();
+type ApiStyle = "openai" | "claude";
 
-interface ModelTarget {
-  provider: "openai" | "deepseek" | "claude";
+interface RuntimeTarget {
+  providerKey: ProviderKey;
   model: string;
+  baseUrl: string;
+  apiKey: string;
+  apiStyle: ApiStyle;
+}
+
+function providerStyle(providerKey: ProviderKey): ApiStyle {
+  return providerKey === "claude" ? "claude" : "openai";
+}
+
+function defaultModelForProvider(providerKey: ProviderKey): string {
+  if (providerKey === "openai") return "gpt-4.1";
+  if (providerKey === "deepseek") return "deepseek-chat";
+  if (providerKey === "claude") return "claude-3-7-sonnet-latest";
+  if (providerKey === "siliconflow") return "Qwen/Qwen2.5-72B-Instruct";
+  return "glm-4.5";
 }
 
 function localFallback(userInput: string): LlmStructuredResponse {
@@ -83,27 +80,95 @@ function localFallback(userInput: string): LlmStructuredResponse {
   };
 }
 
-function normalizeModelTarget(value: string): ModelTarget {
+function normalizeModelTarget(value: string): { providerKey: ProviderKey; model: string } {
   const [providerRaw, ...modelParts] = value.split(":");
-  const provider = providerRaw.trim().toLowerCase();
+  const providerText = providerRaw.trim().toLowerCase();
   const modelRaw = modelParts.join(":").trim();
 
-  if (provider === "openai") {
-    return { provider: "openai", model: modelRaw || "gpt-4.1" };
+  if (
+    providerText === "openai" ||
+    providerText === "deepseek" ||
+    providerText === "claude" ||
+    providerText === "siliconflow" ||
+    providerText === "zai"
+  ) {
+    return {
+      providerKey: providerText,
+      model: modelRaw || defaultModelForProvider(providerText)
+    };
   }
-  if (provider === "deepseek") {
-    return { provider: "deepseek", model: modelRaw || "deepseek-chat" };
+
+  return { providerKey: "openai", model: "gpt-4.1" };
+}
+
+function modelBaseUrl(providerKey: ProviderKey): string {
+  if (providerKey === "openai") return env.openaiBaseUrl;
+  if (providerKey === "deepseek") return env.deepseekBaseUrl;
+  if (providerKey === "claude") return env.claudeBaseUrl;
+  if (providerKey === "siliconflow") return "https://api.siliconflow.cn";
+  return "https://api.z.ai";
+}
+
+function modelApiKey(providerKey: ProviderKey): string {
+  if (providerKey === "openai") return env.openaiApiKey;
+  if (providerKey === "deepseek") return env.deepseekApiKey;
+  if (providerKey === "claude") return env.claudeApiKey;
+  return "";
+}
+
+function buildEnvPipeline() {
+  const pipeline = [env.defaultModel, ...env.fallbackModels].map(normalizeModelTarget);
+  return pipeline.map((target) => ({
+    providerKey: target.providerKey,
+    model:
+      target.providerKey === "deepseek" && target.model === "chat"
+        ? "deepseek-chat"
+        : target.model,
+    baseUrl: modelBaseUrl(target.providerKey),
+    apiKey: modelApiKey(target.providerKey),
+    apiStyle: providerStyle(target.providerKey)
+  }));
+}
+
+async function buildRuntimePipeline(projectId?: string): Promise<RuntimeTarget[]> {
+  const organizationId = projectId ? await resolveOrganizationIdByProjectId(projectId) : null;
+  const settings = await getAiProviderSettings(organizationId);
+
+  const enabled = settings.providers.filter((p) => p.enabled);
+  if (!enabled.length) return buildEnvPipeline();
+
+  const byKey = new Map(enabled.map((p) => [p.providerKey, p]));
+  const pipelineOrder: ProviderKey[] = [settings.defaultProvider, ...settings.fallbackProviders];
+  const targets: RuntimeTarget[] = [];
+  const used = new Set<ProviderKey>();
+  for (const key of pipelineOrder) {
+    if (used.has(key)) continue;
+    const config = byKey.get(key);
+    if (!config) continue;
+    used.add(key);
+    targets.push({
+      providerKey: key,
+      model: config.defaultModel || defaultModelForProvider(key),
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      apiStyle: providerStyle(key)
+    });
   }
-  if (provider === "claude") {
-    const mapped =
-      modelRaw === "sonnet"
-        ? "claude-3-7-sonnet-latest"
-        : modelRaw === "haiku"
-          ? "claude-3-5-haiku-latest"
-          : modelRaw || "claude-3-7-sonnet-latest";
-    return { provider: "claude", model: mapped };
+
+  // If default/fallbacks are incomplete, append enabled providers deterministically.
+  for (const config of enabled) {
+    if (used.has(config.providerKey)) continue;
+    used.add(config.providerKey);
+    targets.push({
+      providerKey: config.providerKey,
+      model: config.defaultModel || defaultModelForProvider(config.providerKey),
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      apiStyle: providerStyle(config.providerKey)
+    });
   }
-  return { provider: "openai", model: "gpt-4.1" };
+
+  return targets.length ? targets : buildEnvPipeline();
 }
 
 function tryParseJson(text: string): unknown {
@@ -176,8 +241,8 @@ async function callOpenAiLike(params: {
       model: params.model,
       temperature: 0.1,
       response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: structuredOutputInstruction },
+        messages: [
+        { role: "system", content: copilotStructuredOutputInstruction },
         { role: "user", content: params.userInput }
       ]
     },
@@ -186,7 +251,7 @@ async function callOpenAiLike(params: {
         Authorization: `Bearer ${params.apiKey}`,
         "Content-Type": "application/json"
       },
-      timeout: 20000
+      timeout: COPILOT_TIMEOUT_MS
     }
   );
   const content = response.data?.choices?.[0]?.message?.content;
@@ -203,7 +268,7 @@ async function callClaude(params: { baseUrl: string; apiKey: string; model: stri
       model: params.model,
       max_tokens: 1000,
       temperature: 0.1,
-      system: structuredOutputInstruction,
+      system: copilotStructuredOutputInstruction,
       messages: [{ role: "user", content: params.userInput }]
     },
     {
@@ -212,7 +277,7 @@ async function callClaude(params: { baseUrl: string; apiKey: string; model: stri
         "anthropic-version": "2023-06-01",
         "Content-Type": "application/json"
       },
-      timeout: 20000
+      timeout: COPILOT_TIMEOUT_MS
     }
   );
   const contentArr = response.data?.content;
@@ -226,47 +291,39 @@ async function callClaude(params: { baseUrl: string; apiKey: string; model: stri
   return normalizeLlmPayload(tryParseJson(text));
 }
 
-export async function parseWithModel(userInput: string): Promise<LlmStructuredResponse> {
+export async function parseWithModel(
+  userInput: string,
+  options?: { projectId?: string }
+): Promise<LlmStructuredResponse> {
   if (env.mockMode) {
     return localFallback(userInput);
   }
 
-  const pipeline = [env.defaultModel, ...env.fallbackModels].map(normalizeModelTarget);
+  const pipeline = await buildRuntimePipeline(options?.projectId);
   const failures: string[] = [];
 
   for (const target of pipeline) {
     try {
-      if (target.provider === "openai") {
-        if (!env.openaiApiKey) throw new Error("OPENAI_API_KEY is empty");
+      if (!target.apiKey) {
+        throw new Error(`${target.providerKey.toUpperCase()} API key is empty`);
+      }
+      if (target.apiStyle === "openai") {
         return await callOpenAiLike({
-          baseUrl: env.openaiBaseUrl,
-          apiKey: env.openaiApiKey,
+          baseUrl: target.baseUrl,
+          apiKey: target.apiKey,
           model: target.model,
           userInput
         });
       }
-      if (target.provider === "deepseek") {
-        if (!env.deepseekApiKey) throw new Error("DEEPSEEK_API_KEY is empty");
-        const model = target.model === "chat" ? "deepseek-chat" : target.model;
-        return await callOpenAiLike({
-          baseUrl: env.deepseekBaseUrl,
-          apiKey: env.deepseekApiKey,
-          model,
-          userInput
-        });
-      }
-      if (target.provider === "claude") {
-        if (!env.claudeApiKey) throw new Error("CLAUDE_API_KEY is empty");
-        return await callClaude({
-          baseUrl: env.claudeBaseUrl,
-          apiKey: env.claudeApiKey,
-          model: target.model,
-          userInput
-        });
-      }
+      return await callClaude({
+        baseUrl: target.baseUrl,
+        apiKey: target.apiKey,
+        model: target.model,
+        userInput
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      failures.push(`${target.provider}:${target.model} => ${message}`);
+      failures.push(`${target.providerKey}:${target.model} => ${message}`);
     }
   }
 

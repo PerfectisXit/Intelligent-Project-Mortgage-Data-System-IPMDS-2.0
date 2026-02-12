@@ -22,6 +22,18 @@ export interface PythonDiffResponse {
   };
 }
 
+export interface PythonHeaderAnalyzeResponse {
+  rawHeaders: string[];
+  standardFields: string[];
+  suggestions: Array<{
+    rawHeader: string;
+    suggestedField: string | null;
+    confidence: number;
+    candidates: Array<{ field: string; score: number }>;
+    needsConfirm: boolean;
+  }>;
+}
+
 export interface PythonOcrResponse {
   text: string;
   confidence: number;
@@ -34,10 +46,20 @@ export interface PythonOcrResponse {
 export async function requestExcelDiff(params: {
   filePath: string;
   existingRows: Array<Record<string, unknown>>;
+  headerMappingOverride?: Record<string, string>;
 }) {
   const res = await axios.post<PythonDiffResponse>(`${env.pythonServiceUrl}/excel/diff`, params, {
     timeout: 120000
   });
+  return res.data;
+}
+
+export async function requestExcelHeaderAnalyze(params: { filePath: string }) {
+  const res = await axios.post<PythonHeaderAnalyzeResponse>(
+    `${env.pythonServiceUrl}/excel/analyze-headers`,
+    params,
+    { timeout: 120000 }
+  );
   return res.data;
 }
 

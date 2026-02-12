@@ -4,6 +4,7 @@ import { authContext } from "./middleware/auth.js";
 import { copilotRouter } from "./routes/copilot.js";
 import { filesRouter } from "./routes/files.js";
 import { importsRouter } from "./routes/imports.js";
+import { settingsRouter } from "./routes/settings.js";
 import { errorHandler } from "./utils/errorHandler.js";
 
 export function createApp() {
@@ -19,6 +20,7 @@ export function createApp() {
   app.use("/api/v1/copilot", copilotRouter);
   app.use("/api/v1/imports", importsRouter);
   app.use("/api/v1/files", filesRouter);
+  app.use("/api/v1/settings", settingsRouter);
 
   app.use(errorHandler);
   return app;

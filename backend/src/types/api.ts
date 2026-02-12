@@ -28,6 +28,7 @@ export interface CopilotInterpretResponse {
     intent: string;
     payload: Record<string, unknown>;
   };
+  answer?: string;
   question?: string;
   options?: string[];
   candidateMatches?: Array<{ canonical: string; score: number; reason: string }>;

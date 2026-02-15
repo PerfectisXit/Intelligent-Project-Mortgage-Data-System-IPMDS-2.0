@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-02-15
+### Added
+- 导入错误“逐条手动修正并确认”能力：
+  - 新增接口 `POST /api/v1/imports/{id}/rows/{rowNo}/manual-fix`
+  - 支持将 `ERROR` 行修正为 `NEW/CHANGED` 并实时重算导入摘要计数
+  - 前端新增错误详情中的手动修正弹窗（字段表单 + JSON 双模式）
+- 导入错误修正界面新增中文字段名展示（中文 + 英文键），降低手动修正门槛。
+- 新增 `zai_coding` 独立服务商配置（与 `zai` 常规 API 完全独立开关/密钥/模型/探测）。
+- 新增 `v0.2.1` 中文发布说明：`docs/releases/v0.2.1.md`。
+
+### Changed
+- AI 提供商设置页重构：
+  - 服务商改为下拉选择，页面不再长列表展开
+  - 模型支持下拉选择与自定义输入
+  - Base URL 支持预设一键套用
+  - `z.ai` 常规与 `z.ai Coding Plan` 在厂商选择层面直接区分
+- 一键探测逻辑优化：
+  - 仅探测“已启用且已配置完整（API Key + Base URL）”的服务商
+  - 跳过未配置服务商并提示名单
+  - 探测结果提示按成功/失败分流，不再“失败也显示成功样式”
+- 导入比对表格增强：
+  - 顶部新增/变更/无变化/错误标签可点击筛选
+  - 筛选状态与表格过滤联动
+  - 汇总栏显示“当前筛选行数/总行数”
+- Python 校验规则增强：
+  - 识别“联系方式疑似填写身份证号”
+  - 识别“身份证号疑似填写手机号”
+  - 增加身份证号格式校验
+- Mock 模式配置持久化与兼容增强：
+  - 新增本地磁盘持久化（`.run/ai-provider-settings.mock.json`）
+  - 读取旧配置时自动补齐新增 provider（避免升级后选项消失）
+
+### Fixed
+- 修复 `z.ai` 端点适配问题：
+  - 常规 API 走 `/api/paas/v4/chat/completions`
+  - Coding Plan 走 `/api/coding/paas/v4/chat/completions`
+- 修复探测判定逻辑：即使 HTTP 2xx，只要响应体存在 `error` 也判定为失败。
+- 修复错误详情页在“无 fieldDiffs”场景下看不到 `errorMessage` 的问题。
+- 修复手动修正失败时“无明显反馈”问题，前端改为直出后端错误信息。
+
 ## [0.2.0] - 2026-02-12
 ### Added
 - AI provider management backend:

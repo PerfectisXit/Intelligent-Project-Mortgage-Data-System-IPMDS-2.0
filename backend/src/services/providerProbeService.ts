@@ -14,6 +14,21 @@ function resolveProbeUrl(provider: ProviderConfig): string {
   if (provider.providerKey === "claude") {
     return `${baseUrl}/v1/messages`;
   }
+  if (provider.providerKey === "zai_coding") {
+    if (baseUrl.endsWith("/api/coding/paas/v4")) {
+      return `${baseUrl}/chat/completions`;
+    }
+    return `${baseUrl}/api/coding/paas/v4/chat/completions`;
+  }
+  if (provider.providerKey === "zai") {
+    if (baseUrl.endsWith("/api/coding/paas/v4")) {
+      return `${baseUrl}/chat/completions`;
+    }
+    if (baseUrl.endsWith("/api/paas/v4")) {
+      return `${baseUrl}/chat/completions`;
+    }
+    return `${baseUrl}/api/paas/v4/chat/completions`;
+  }
   return `${baseUrl}/v1/chat/completions`;
 }
 
@@ -63,7 +78,15 @@ export async function probeProviderAvailability(provider: ProviderConfig): Promi
     const latencyMs = Date.now() - startedAt;
     const statusCode = response.status;
 
-    if (statusCode >= 200 && statusCode < 300) {
+    const bodyErrorMessage =
+      typeof response.data?.error?.message === "string"
+        ? response.data.error.message
+        : typeof response.data?.message === "string"
+          ? response.data.message
+          : null;
+
+    // Some providers may return HTTP 200 with an error payload.
+    if (statusCode >= 200 && statusCode < 300 && !bodyErrorMessage) {
       return {
         providerKey: provider.providerKey,
         available: true,
@@ -73,12 +96,7 @@ export async function probeProviderAvailability(provider: ProviderConfig): Promi
       };
     }
 
-    const detail =
-      typeof response.data?.error?.message === "string"
-        ? response.data.error.message
-        : typeof response.data?.message === "string"
-          ? response.data.message
-          : "请求失败";
+    const detail = bodyErrorMessage ?? "请求失败";
 
     return {
       providerKey: provider.providerKey,

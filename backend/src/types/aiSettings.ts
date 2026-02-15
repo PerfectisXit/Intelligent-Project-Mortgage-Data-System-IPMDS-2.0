@@ -1,4 +1,4 @@
-export type ProviderKey = "siliconflow" | "zai" | "openai" | "deepseek" | "claude";
+export type ProviderKey = "siliconflow" | "zai" | "zai_coding" | "openai" | "deepseek" | "claude";
 
 export interface ProviderConfig {
   providerKey: ProviderKey;

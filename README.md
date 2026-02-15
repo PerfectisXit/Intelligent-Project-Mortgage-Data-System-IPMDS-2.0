@@ -1,7 +1,7 @@
 # IPMDS 2.0 - 智能工抵台账管理系统
 
-![Version](https://img.shields.io/badge/version-v0.2.0-blue)
-![Release](https://img.shields.io/badge/release-v0.2.0-success)
+![Version](https://img.shields.io/badge/version-v0.2.1-blue)
+![Release](https://img.shields.io/badge/release-v0.2.1-success)
 
 企业级 Web 台账系统，覆盖：
 - 智能 Excel 导入比对（新增/变更/无变化）
@@ -9,8 +9,8 @@
 - AI Copilot 自然语言录入与追问
 - OCR 文件识别绑定（接口预留）
 
-当前版本：`v0.2.0`（与 `backend/package.json`、`frontend/package.json` 同步）
-版本说明：`docs/releases/v0.2.0.md`
+当前版本：`v0.2.1`
+版本说明：`docs/releases/v0.2.1.md`
 
 ## 目录
 - `frontend/`: React + Ant Design

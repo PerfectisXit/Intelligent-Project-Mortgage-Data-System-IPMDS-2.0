@@ -12,6 +12,7 @@ import {
   createImportAndDiff,
   getImportAudits,
   getImportDiff,
+  manualFixImportRow,
   rollbackImport
 } from "../services/importService.js";
 import { requestExcelHeaderAnalyze } from "../services/pythonClient.js";
@@ -356,6 +357,37 @@ importsRouter.get("/:id/diff", requireRoles(["admin", "finance", "sales", "audit
     }
     res.json(result);
   } catch (error) {
+    next(error);
+  }
+});
+
+importsRouter.post("/:id/rows/:rowNo/manual-fix", requireRoles(["admin", "finance"]), async (req, res, next) => {
+  try {
+    const rowNo = Number(req.params.rowNo);
+    if (!Number.isInteger(rowNo) || rowNo <= 0) {
+      res.status(400).json({ message: "Invalid rowNo" });
+      return;
+    }
+    const afterData =
+      req.body?.afterData && typeof req.body.afterData === "object" && !Array.isArray(req.body.afterData)
+        ? (req.body.afterData as Record<string, unknown>)
+        : null;
+    if (!afterData) {
+      res.status(400).json({ message: "afterData must be an object" });
+      return;
+    }
+    const actionTypeRaw = String(req.body?.actionType || "").trim().toUpperCase();
+    const actionType =
+      actionTypeRaw === "NEW" || actionTypeRaw === "CHANGED" ? (actionTypeRaw as "NEW" | "CHANGED") : undefined;
+    const result = await manualFixImportRow({
+      importLogId: req.params.id,
+      rowNo,
+      afterData,
+      actionType
+    });
+    res.json(result);
+  } catch (error) {
+    if (handleImportMutationError(error, res)) return;
     next(error);
   }
 });

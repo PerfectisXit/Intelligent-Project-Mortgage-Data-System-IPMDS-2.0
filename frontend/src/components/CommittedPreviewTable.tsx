@@ -1,6 +1,6 @@
-import { Card, Table, Tag } from "antd";
+import React, { useMemo } from "react";
+import { Card, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useMemo } from "react";
 import type { CommittedPreviewRow } from "../types";
 
 function sourceTag(source: CommittedPreviewRow["construction_unit_source"]) {
@@ -39,14 +39,8 @@ function humanUpdateSource(row: CommittedPreviewRow) {
 }
 
 function recoverMojibake(text: string) {
-  // Recover common UTF-8-as-latin1 mojibake, e.g. "GDæ´åå°è´¦.xlsx"
-  try {
-    // escape/unescape is deprecated but still widely supported and effective for this case.
-    const recovered = decodeURIComponent(escape(text));
-    return recovered || text;
-  } catch {
-    return text;
-  }
+  const recovered = decodeURIComponent(escape(text));
+  return recovered || text;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -57,12 +51,10 @@ function formatDateTime(value: string | null | undefined) {
     return t.length >= 19 ? t.slice(0, 19) : t;
   }
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
-    d.getMinutes()
-  )}:${pad(d.getSeconds())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-export function CommittedPreviewTable({ rows }: { rows: CommittedPreviewRow[] }) {
+export const CommittedPreviewTable = React.memo(function CommittedPreviewTable({ rows }: { rows: CommittedPreviewRow[] }) {
   const filters = useMemo(() => {
     const uniq = (arr: Array<string | null | undefined>) =>
       Array.from(new Set(arr.map((x) => (x ?? "").trim()).filter(Boolean))).map((v) => ({ text: v, value: v }));
@@ -101,7 +93,7 @@ export function CommittedPreviewTable({ rows }: { rows: CommittedPreviewRow[] })
         filters: filters.status,
         onFilter: (value, row) => (row.status_display ?? "") === value,
         sorter: (a, b) => String(a.status_display ?? "").localeCompare(String(b.status_display ?? "")),
-        render: (value: string | null) => <Tag color="blue">{value || "-"}</Tag>
+        render: (value: string | null) => <Tag>{value || "-"}</Tag>
       },
       { title: "状态判定依据", dataIndex: "status_basis", width: 320, ellipsis: true },
       { title: "原始状态", dataIndex: "sale_status_raw", width: 120 },
@@ -183,8 +175,7 @@ export function CommittedPreviewTable({ rows }: { rows: CommittedPreviewRow[] })
         title: "最新收款流水时间",
         dataIndex: "last_txn_occurred_at",
         width: 200,
-        sorter: (a, b) =>
-          new Date(a.last_txn_occurred_at ?? 0).getTime() - new Date(b.last_txn_occurred_at ?? 0).getTime(),
+        sorter: (a, b) => new Date(a.last_txn_occurred_at ?? 0).getTime() - new Date(b.last_txn_occurred_at ?? 0).getTime(),
         render: (v: string | null) => formatDateTime(v)
       },
       {
@@ -207,7 +198,11 @@ export function CommittedPreviewTable({ rows }: { rows: CommittedPreviewRow[] })
           return text === "-" ? text : recoverMojibake(text);
         }
       },
-      { title: "最近导入批次", dataIndex: "last_import_log_id", width: 280 }
+      {
+        title: "最近导入批次",
+        dataIndex: "last_import_log_id",
+        width: 280
+      }
     ],
     [filters]
   );
@@ -224,4 +219,4 @@ export function CommittedPreviewTable({ rows }: { rows: CommittedPreviewRow[] })
       />
     </Card>
   );
-}
+});

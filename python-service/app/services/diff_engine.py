@@ -26,6 +26,7 @@ def build_business_key(row: dict) -> str:
 PHONE_SPLIT_RE = re.compile(r"[，,;；/\s]+")
 MOBILE_RE = re.compile(r"^1\d{10}$")
 LANDLINE_RE = re.compile(r"^0\d{2,3}-?\d{7,8}$")
+ID_CARD_RE = re.compile(r"^(?:\d{15}|\d{17}[\dXx])$")
 
 
 def normalize_phone_tokens(value: str) -> list[str]:
@@ -34,6 +35,10 @@ def normalize_phone_tokens(value: str) -> list[str]:
 
 def is_valid_phone(value: str) -> bool:
     return bool(MOBILE_RE.match(value) or LANDLINE_RE.match(value))
+
+
+def is_likely_id_card(value: str) -> bool:
+    return bool(ID_CARD_RE.match(value.strip()))
 
 
 def validate_row(row: dict) -> list[str]:
@@ -49,9 +54,19 @@ def validate_row(row: dict) -> list[str]:
         if not tokens:
             errors.append("联系方式为空或格式不可识别")
         else:
+            if any(is_likely_id_card(token) for token in tokens):
+                errors.append("联系方式疑似填写了身份证号")
             invalid = [token for token in tokens if not is_valid_phone(token)]
             if invalid:
                 errors.append(f"联系方式格式不合法: {', '.join(invalid)}")
+
+    id_card_raw = row.get("id_card")
+    if isinstance(id_card_raw, str) and id_card_raw.strip():
+        id_card = id_card_raw.strip()
+        if is_valid_phone(id_card):
+            errors.append("身份证号疑似填写了手机号")
+        elif not is_likely_id_card(id_card):
+            errors.append("身份证号格式不合法")
 
     amount = row.get("actual_received")
     deal_price = row.get("deal_price")

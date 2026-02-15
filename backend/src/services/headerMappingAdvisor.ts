@@ -50,6 +50,26 @@ type RuntimeModel = {
   model: string;
 };
 
+function resolveOpenAiLikeUrl(providerKey: ProviderKey, baseUrl: string): string {
+  const normalized = baseUrl.replace(/\/$/, "");
+  if (providerKey === "zai_coding") {
+    if (normalized.endsWith("/api/coding/paas/v4")) {
+      return `${normalized}/chat/completions`;
+    }
+    return `${normalized}/api/coding/paas/v4/chat/completions`;
+  }
+  if (providerKey === "zai") {
+    if (normalized.endsWith("/api/coding/paas/v4")) {
+      return `${normalized}/chat/completions`;
+    }
+    if (normalized.endsWith("/api/paas/v4")) {
+      return `${normalized}/chat/completions`;
+    }
+    return `${normalized}/api/paas/v4/chat/completions`;
+  }
+  return `${normalized}/v1/chat/completions`;
+}
+
 type LlmReviewCallbacks = {
   onAttemptStart?: (payload: { providerKey: ProviderKey; model: string }) => void;
   onAttemptResult?: (payload: LlmAttempt) => void;
@@ -105,6 +125,7 @@ function tryParseJson(text: string): unknown {
 }
 
 async function callOpenAiLike(params: {
+  providerKey: ProviderKey;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -112,7 +133,7 @@ async function callOpenAiLike(params: {
   user: string;
 }) {
   const response = await axios.post(
-    `${params.baseUrl.replace(/\/$/, "")}/v1/chat/completions`,
+    resolveOpenAiLikeUrl(params.providerKey, params.baseUrl),
     {
       model: params.model,
       temperature: 0.1,
@@ -252,6 +273,7 @@ async function runLlmReview(params: {
       const result =
         model.apiStyle === "openai"
           ? await callOpenAiLike({
+              providerKey: model.providerKey,
               baseUrl: model.baseUrl,
               apiKey: model.apiKey,
               model: model.model,

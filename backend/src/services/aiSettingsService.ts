@@ -1,9 +1,11 @@
 import { z } from "zod";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { env } from "../config/env.js";
 import { pool } from "../db/pool.js";
 import type { AiProviderSettings, ProviderConfig, ProviderKey } from "../types/aiSettings.js";
 
-const providerKeys = ["siliconflow", "zai", "openai", "deepseek", "claude"] as const;
+const providerKeys = ["siliconflow", "zai", "zai_coding", "openai", "deepseek", "claude"] as const;
 const providerKeyEnum = z.enum(providerKeys);
 
 const providerConfigSchema = z.object({
@@ -90,12 +92,36 @@ const defaultSettings: AiProviderSettings = {
       enabled: false
     },
     {
+      providerKey: "zai_coding",
+      providerName: "z.ai Coding Plan",
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
+      apiKey: "",
+      defaultModel: "glm-4.7",
+      enabled: false
+    },
+    {
       providerKey: "openai",
       providerName: "OpenAI",
       baseUrl: env.openaiBaseUrl,
       apiKey: env.openaiApiKey,
       defaultModel: normalizeDefaultModel(env.defaultModel, "openai", "gpt-4.1"),
       enabled: true
+    },
+    {
+      providerKey: "deepseek",
+      providerName: "DeepSeek",
+      baseUrl: env.deepseekBaseUrl,
+      apiKey: env.deepseekApiKey,
+      defaultModel: "deepseek-chat",
+      enabled: false
+    },
+    {
+      providerKey: "claude",
+      providerName: "Claude",
+      baseUrl: env.claudeBaseUrl,
+      apiKey: env.claudeApiKey,
+      defaultModel: "claude-3-5-sonnet",
+      enabled: false
     }
   ],
   defaultProvider: "openai",
@@ -103,6 +129,7 @@ const defaultSettings: AiProviderSettings = {
 };
 
 const inMemoryStore = new Map<string, AiProviderSettings>();
+const mockStoreFile = path.join(process.cwd(), ".run", "ai-provider-settings.mock.json");
 
 function normalizeDefaultModel(value: string, provider: ProviderKey, fallback: string) {
   const [providerRaw, ...modelParts] = value.split(":");
@@ -110,6 +137,25 @@ function normalizeDefaultModel(value: string, provider: ProviderKey, fallback: s
   if (providerText !== provider) return fallback;
   const model = modelParts.join(":").trim();
   return model || fallback;
+}
+
+async function readMockStoreFromDisk(): Promise<AiProviderSettings | null> {
+  try {
+    const raw = await fs.readFile(mockStoreFile, "utf-8");
+    const parsed = JSON.parse(raw) as AiProviderSettings;
+    return normalizeSettings(parsed);
+  } catch {
+    return null;
+  }
+}
+
+async function writeMockStoreToDisk(settings: AiProviderSettings) {
+  try {
+    await fs.mkdir(path.dirname(mockStoreFile), { recursive: true });
+    await fs.writeFile(mockStoreFile, JSON.stringify(settings, null, 2), "utf-8");
+  } catch {
+    // ignore disk persistence errors in mock mode to avoid blocking API calls
+  }
 }
 
 async function firstOrganizationId() {
@@ -167,7 +213,16 @@ export async function getAiProviderSettings(organizationId?: string | null): Pro
   const orgId = organizationId ?? (await firstOrganizationId());
 
   if (!pool || env.mockMode || !orgId) {
-    return inMemoryStore.get("default") ?? defaultSettings;
+    const memory = inMemoryStore.get("default");
+    if (memory) return mergeDefaultsWithStored(memory);
+
+    const disk = await readMockStoreFromDisk();
+    if (disk) {
+      inMemoryStore.set("default", disk);
+      return mergeDefaultsWithStored(disk);
+    }
+
+    return defaultSettings;
   }
 
   const res = await pool.query(
@@ -198,6 +253,7 @@ export async function upsertAiProviderSettings(params: {
 
   if (!pool || env.mockMode || !orgId) {
     inMemoryStore.set("default", settings);
+    await writeMockStoreToDisk(settings);
     return settings;
   }
 

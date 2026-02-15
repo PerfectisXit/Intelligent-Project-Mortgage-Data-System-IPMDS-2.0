@@ -31,6 +31,26 @@ interface RuntimeTarget {
   apiStyle: ApiStyle;
 }
 
+function resolveOpenAiLikeUrl(providerKey: ProviderKey, baseUrl: string): string {
+  const normalized = baseUrl.replace(/\/$/, "");
+  if (providerKey === "zai_coding") {
+    if (normalized.endsWith("/api/coding/paas/v4")) {
+      return `${normalized}/chat/completions`;
+    }
+    return `${normalized}/api/coding/paas/v4/chat/completions`;
+  }
+  if (providerKey === "zai") {
+    if (normalized.endsWith("/api/coding/paas/v4")) {
+      return `${normalized}/chat/completions`;
+    }
+    if (normalized.endsWith("/api/paas/v4")) {
+      return `${normalized}/chat/completions`;
+    }
+    return `${normalized}/api/paas/v4/chat/completions`;
+  }
+  return `${normalized}/v1/chat/completions`;
+}
+
 function providerStyle(providerKey: ProviderKey): ApiStyle {
   return providerKey === "claude" ? "claude" : "openai";
 }
@@ -40,6 +60,7 @@ function defaultModelForProvider(providerKey: ProviderKey): string {
   if (providerKey === "deepseek") return "deepseek-chat";
   if (providerKey === "claude") return "claude-3-7-sonnet-latest";
   if (providerKey === "siliconflow") return "Qwen/Qwen2.5-72B-Instruct";
+  if (providerKey === "zai_coding") return "glm-4.7";
   return "glm-4.5";
 }
 
@@ -90,7 +111,8 @@ function normalizeModelTarget(value: string): { providerKey: ProviderKey; model:
     providerText === "deepseek" ||
     providerText === "claude" ||
     providerText === "siliconflow" ||
-    providerText === "zai"
+    providerText === "zai" ||
+    providerText === "zai_coding"
   ) {
     return {
       providerKey: providerText,
@@ -106,6 +128,7 @@ function modelBaseUrl(providerKey: ProviderKey): string {
   if (providerKey === "deepseek") return env.deepseekBaseUrl;
   if (providerKey === "claude") return env.claudeBaseUrl;
   if (providerKey === "siliconflow") return "https://api.siliconflow.cn";
+  if (providerKey === "zai_coding") return "https://api.z.ai/api/coding/paas/v4";
   return "https://api.z.ai";
 }
 
@@ -230,13 +253,14 @@ function normalizeLlmPayload(payload: unknown): LlmStructuredResponse {
 }
 
 async function callOpenAiLike(params: {
+  providerKey: ProviderKey;
   baseUrl: string;
   apiKey: string;
   model: string;
   userInput: string;
 }) {
   const response = await axios.post(
-    `${params.baseUrl.replace(/\/$/, "")}/v1/chat/completions`,
+    resolveOpenAiLikeUrl(params.providerKey, params.baseUrl),
     {
       model: params.model,
       temperature: 0.1,
@@ -309,6 +333,7 @@ export async function parseWithModel(
       }
       if (target.apiStyle === "openai") {
         return await callOpenAiLike({
+          providerKey: target.providerKey,
           baseUrl: target.baseUrl,
           apiKey: target.apiKey,
           model: target.model,

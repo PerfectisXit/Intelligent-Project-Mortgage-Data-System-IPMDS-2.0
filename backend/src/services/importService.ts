@@ -14,6 +14,7 @@ type InMemoryImport = {
 };
 
 type FieldDiff = { before: unknown; after: unknown };
+type FixActionType = "NEW" | "CHANGED";
 
 const inMemoryStore = new Map<string, InMemoryImport>();
 const phoneSplitRegex = /[，,;；/\s]+/;
@@ -90,6 +91,51 @@ function parseFieldDiffs(value: unknown): Record<string, FieldDiff> {
     result[field] = { before: obj.before, after: obj.after };
   }
   return result;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function buildManualFieldDiffs(params: {
+  actionType: FixActionType;
+  beforeData: Record<string, unknown> | null;
+  afterData: Record<string, unknown>;
+}): Record<string, FieldDiff> {
+  if (params.actionType === "NEW") {
+    const result: Record<string, FieldDiff> = {};
+    for (const [k, v] of Object.entries(params.afterData)) {
+      result[k] = { before: null, after: v ?? null };
+    }
+    return result;
+  }
+
+  const before = params.beforeData ?? {};
+  const keys = new Set([...Object.keys(before), ...Object.keys(params.afterData)]);
+  const result: Record<string, FieldDiff> = {};
+  for (const key of keys) {
+    const b = before[key] ?? null;
+    const a = params.afterData[key] ?? null;
+    if (!sameValue(b, a)) {
+      result[key] = { before: b, after: a };
+    }
+  }
+  return result;
+}
+
+function summarizeRows(rows: Array<{ actionType: "NEW" | "CHANGED" | "UNCHANGED" | "ERROR" }>) {
+  const summary = { totalRows: rows.length, newRows: 0, changedRows: 0, unchangedRows: 0, errorRows: 0 };
+  for (const row of rows) {
+    if (row.actionType === "NEW") summary.newRows += 1;
+    else if (row.actionType === "CHANGED") summary.changedRows += 1;
+    else if (row.actionType === "UNCHANGED") summary.unchangedRows += 1;
+    else summary.errorRows += 1;
+  }
+  return summary;
 }
 
 async function insertAuditRows(params: {
@@ -335,6 +381,139 @@ export async function getImportDiff(importLogId: string) {
     [importLogId]
   );
   return { rows: rows.rows };
+}
+
+export async function manualFixImportRow(params: {
+  importLogId: string;
+  rowNo: number;
+  afterData: Record<string, unknown>;
+  actionType?: FixActionType;
+}) {
+  if (!isPlainObject(params.afterData)) {
+    throw new Error("afterData must be an object");
+  }
+
+  if (!pool || env.mockMode) {
+    const value = inMemoryStore.get(params.importLogId);
+    if (!value) throw new Error("Import log not found");
+    if (value.status !== "diffed") throw new Error("Only diffed imports can be manually fixed");
+    const idx = value.rows.findIndex((r) => r.rowNo === params.rowNo);
+    if (idx < 0) throw new Error("Import row not found");
+
+    const old = value.rows[idx];
+    const fixedActionType: FixActionType = params.actionType ?? (old.beforeData ? "CHANGED" : "NEW");
+    const beforeData = isPlainObject(old.beforeData) ? old.beforeData : null;
+    const afterData = params.afterData;
+    const fieldDiffs = buildManualFieldDiffs({ actionType: fixedActionType, beforeData, afterData });
+    const businessKey = asString(afterData.unit_code) ?? old.businessKey ?? `row_${old.rowNo}`;
+    const updatedRow: DiffRow = {
+      ...old,
+      actionType: fixedActionType,
+      businessKey,
+      afterData,
+      fieldDiffs,
+      errorMessage: undefined
+    };
+    value.rows[idx] = updatedRow;
+    value.summary = summarizeRows(value.rows);
+    inMemoryStore.set(params.importLogId, value);
+    return { row: updatedRow, summary: value.summary };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const logRes = await client.query(`SELECT status FROM import_logs WHERE id = $1 FOR UPDATE`, [params.importLogId]);
+    if (!logRes.rowCount) throw new Error("Import log not found");
+    const status = logRes.rows[0].status as string;
+    if (status !== "diffed") throw new Error("Only diffed imports can be manually fixed");
+
+    const rowRes = await client.query(
+      `SELECT row_no, action_type, business_key, entity_type, before_data, after_data
+       FROM import_log_rows
+       WHERE import_log_id = $1 AND row_no = $2
+       FOR UPDATE`,
+      [params.importLogId, params.rowNo]
+    );
+    if (!rowRes.rowCount) throw new Error("Import row not found");
+
+    const old = rowRes.rows[0];
+    const beforeData = isPlainObject(old.before_data) ? (old.before_data as Record<string, unknown>) : null;
+    const fixedActionType: FixActionType = params.actionType ?? (beforeData ? "CHANGED" : "NEW");
+    const fieldDiffs = buildManualFieldDiffs({
+      actionType: fixedActionType,
+      beforeData,
+      afterData: params.afterData
+    });
+    const businessKey = asString(params.afterData.unit_code) ?? (old.business_key as string | null) ?? `row_${params.rowNo}`;
+
+    await client.query(
+      `UPDATE import_log_rows
+       SET action_type = $3,
+           business_key = $4,
+           after_data = $5::jsonb,
+           field_diffs = $6::jsonb,
+           error_message = NULL
+       WHERE import_log_id = $1 AND row_no = $2`,
+      [
+        params.importLogId,
+        params.rowNo,
+        fixedActionType,
+        businessKey,
+        JSON.stringify(params.afterData),
+        JSON.stringify(fieldDiffs)
+      ]
+    );
+
+    const summaryRes = await client.query(
+      `SELECT
+         COUNT(*)::int AS total_rows,
+         COUNT(*) FILTER (WHERE action_type = 'NEW')::int AS new_rows,
+         COUNT(*) FILTER (WHERE action_type = 'CHANGED')::int AS changed_rows,
+         COUNT(*) FILTER (WHERE action_type = 'UNCHANGED')::int AS unchanged_rows,
+         COUNT(*) FILTER (WHERE action_type = 'ERROR')::int AS error_rows
+       FROM import_log_rows
+       WHERE import_log_id = $1`,
+      [params.importLogId]
+    );
+    const s = summaryRes.rows[0];
+    const summary = {
+      totalRows: Number(s.total_rows ?? 0),
+      newRows: Number(s.new_rows ?? 0),
+      changedRows: Number(s.changed_rows ?? 0),
+      unchangedRows: Number(s.unchanged_rows ?? 0),
+      errorRows: Number(s.error_rows ?? 0)
+    };
+
+    await client.query(
+      `UPDATE import_logs
+       SET total_rows = $2,
+           new_rows = $3,
+           changed_rows = $4,
+           unchanged_rows = $5,
+           error_rows = $6,
+           diff_summary = COALESCE(diff_summary, '{}'::jsonb) || $7::jsonb
+       WHERE id = $1`,
+      [params.importLogId, summary.totalRows, summary.newRows, summary.changedRows, summary.unchangedRows, summary.errorRows, JSON.stringify(summary)]
+    );
+
+    await client.query("COMMIT");
+    const row: DiffRow = {
+      rowNo: Number(old.row_no),
+      actionType: fixedActionType,
+      businessKey,
+      entityType: (old.entity_type as "unit" | "customer" | "transaction") ?? "unit",
+      beforeData,
+      afterData: params.afterData,
+      fieldDiffs
+    };
+    return { row, summary };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getImportAudits(importLogId: string) {
